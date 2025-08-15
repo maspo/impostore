@@ -101,7 +101,6 @@ BASE = """
       <div class="card">
         {% block content %}{% endblock %}
       </div>
-      <p class="muted" style="margin-top:12px"><small>Minimal Flask app – nessun login, una sola partita globale.</small></p>
     </div>
   </body>
 </html>
@@ -161,7 +160,6 @@ MASTER = """
   <div class="card" style="margin-top:16px">
     <p class="muted">Anteprima (solo per il Master)</p>
     <p>Parola segreta: <strong>{{ round.secret_word }}</strong></p>
-    <p>Impostore: <strong>{{ imp_name }}</strong></p>
   </div>
 {% endif %}
 {% endblock %}

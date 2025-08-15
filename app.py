@@ -18,14 +18,12 @@ lock = threading.Lock()
 
 
 def _token(n=10):
-    # piccolo token per i giocatori, sufficiente per uso casual
     alphabet = string.ascii_letters + string.digits
     return "".join(random.choice(alphabet) for _ in range(n))
 
 
 def load_words(path=WORDS_FILE):
     if not os.path.exists(path):
-        # fallback di sicurezza
         return ["pizza", "montagna", "aereo", "computer", "mare", "biblioteca"]
     with open(path, "r", encoding="utf-8") as f:
         words = [w.strip() for w in f.readlines()]
@@ -97,6 +95,7 @@ BASE = """
       small{opacity:.8}
       a{color:#93c5fd}
       .hint{font-size:.9em;color:#cbd5e1}
+      form.inline { display:inline-block; margin-left:8px }
     </style>
   </head>
   <body>
@@ -155,40 +154,6 @@ HOME = """
 {% endblock %}
 """
 
-MASTER = """
-{% extends "BASE" %}
-{% block content %}
-<h1>Area Master</h1>
-<p class="muted">Condividi ai giocatori il link <code>{{ base_url }}</code> per entrare.</p>
-
-<h3>Giocatori ({{ players|length }})</h3>
-<div>
-  {% for p in players %}
-    <span class="pill">{{ p.name }}</span>
-  {% endfor %}
-</div>
-
-<hr>
-<h3>Turno</h3>
-<p>Numero turno: <strong>{{ round.number }}</strong>{% if round.secret_word %} • Parola selezionata{% endif %}</p>
-<div class="row">
-  <form method="post" action="{{ url_for('start_round') }}">
-    <button class="btn primary" type="submit">Nuovo turno</button>
-  </form>
-  <form method="post" action="{{ url_for('reset_game') }}" onsubmit="return confirm('Sei sicuro? Tutto andrà perso.')">
-    <button class="btn danger" type="submit">Reset partita</button>
-  </form>
-</div>
-
-{% if round.secret_word %}
-  <div class="card" style="margin-top:16px">
-    <p class="muted">Anteprima (solo per il Master)</p>
-    <p>Parola segreta: <strong>{{ round.secret_word }}</strong></p>
-  </div>
-{% endif %}
-{% endblock %}
-"""
-
 PLAYER = """
 {% extends "BASE" %}
 {% block content %}
@@ -210,6 +175,15 @@ PLAYER = """
 
 <div class="center" style="margin-top:12px">
   <a class="btn" href="{{ url_for('player', token=player.token) }}">Aggiorna</a>
+  {% if is_master %}
+    <form method="post" action="{{ url_for('start_round') }}" class="inline">
+      <button class="btn primary" type="submit">Nuovo turno</button>
+    </form>
+    <form method="post" action="{{ url_for('reset_game') }}"
+          onsubmit="return confirm('Sei sicuro? Tutto andrà perso.')" class="inline">
+      <button class="btn danger" type="submit">Reset partita</button>
+    </form>
+  {% endif %}
 </div>
 {% endblock %}
 """
@@ -224,9 +198,7 @@ STATUS = """
 {% endblock %}
 """
 
-# Register template strings
-TEMPLATES = {"BASE": BASE, "HOME": HOME, "MASTER": MASTER, "PLAYER": PLAYER, "STATUS": STATUS}
-# Register templates with DictLoader
+TEMPLATES = {"BASE": BASE, "HOME": HOME, "PLAYER": PLAYER, "STATUS": STATUS}
 app.jinja_loader = DictLoader(TEMPLATES)
 
 def render(name, **ctx):
@@ -274,22 +246,9 @@ def join():
         STATE.players_by_token[token] = p
         if is_master:
             STATE.master_token = token
-    # Vai alla pagina giusta
-    if is_master:
-        return redirect(url_for("master", token=token))
-    else:
-        return redirect(url_for("player", token=token))
 
-
-@app.route("/master/<token>", methods=["GET"])
-def master(token):
-    with lock:
-        if token != STATE.master_token or token not in STATE.players_by_token:
-            abort(403)
-        players = list(STATE.players_by_token.values())
-        rnd = STATE.current_round
-    base_url = request.host_url.rstrip("/")
-    return render("MASTER", players=players, round=rnd, base_url=base_url)
+    # Master e non-Master finiscono nella stessa pagina
+    return redirect(url_for("player", token=token))
 
 
 @app.route("/player/<token>", methods=["GET"])
@@ -300,7 +259,8 @@ def player(token):
             abort(404)
         rnd = STATE.current_round
         is_imp = (rnd.impostor_token == token and rnd.number > 0)
-    return render("PLAYER", player=player, round=rnd, is_impostor=is_imp)
+        is_master = (token == STATE.master_token)
+    return render("PLAYER", player=player, round=rnd, is_impostor=is_imp, is_master=is_master)
 
 
 @app.route("/status", methods=["GET"])
@@ -321,8 +281,8 @@ def start_round():
         try:
             STATE.start_new_round()
         except ValueError as e:
-            return f"<p style='font-family:system-ui'>Errore: {e}<br><a href='{url_for('master', token=token)}'>Torna indietro</a></p>"
-    return redirect(url_for("master", token=token))
+            return f"<p style='font-family:system-ui'>Errore: {e}<br><a href='{url_for('player', token=token)}'>Torna indietro</a></p>"
+    return redirect(url_for("player", token=token))
 
 
 @app.route("/reset", methods=["POST"])
@@ -335,10 +295,9 @@ def reset_game():
     return redirect(url_for("home"))
 
 
-# comodo alias per i form del template master
+# Alias per i form del template
 @app.route("/start_round", methods=["POST"])
 def start_round_alias():
-    # manteniamo il token dalla referrer
     return start_round()
 
 

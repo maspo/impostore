@@ -1,0 +1,11 @@
+
+services:
+  - type: web
+    name: impostore-miniapp
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: WORDS_FILE
+        value: words.txt

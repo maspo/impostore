@@ -5,8 +5,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from flask import Flask, request, redirect, url_for, render_template_string, abort
-
+from flask import Flask, request, redirect, url_for, render_template, abort
+from jinja2 import DictLoader
 # ---------- Config ----------
 WORDS_FILE = os.environ.get("WORDS_FILE", "words.txt")
 MIN_PLAYERS = 3  # minimo consigliato per partire
@@ -204,11 +204,10 @@ STATUS = """
 
 # Register template strings
 TEMPLATES = {"BASE": BASE, "HOME": HOME, "MASTER": MASTER, "PLAYER": PLAYER, "STATUS": STATUS}
-
+app.jinja_loader = DictLoader(TEMPLATES)
 
 def render(name, **ctx):
-    return render_template_string(TEMPLATES[name], **ctx, **{"BASE": TEMPLATES["BASE"]})
-
+    return render_template(name, **ctx)
 
 # ---------- Routes ----------
 @app.route("/", methods=["GET"])

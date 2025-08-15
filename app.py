@@ -7,9 +7,11 @@ from typing import Dict, Optional
 
 from flask import Flask, request, redirect, url_for, render_template, abort
 from jinja2 import DictLoader
+
 # ---------- Config ----------
 WORDS_FILE = os.environ.get("WORDS_FILE", "words.txt")
 MIN_PLAYERS = 3  # minimo consigliato per partire
+MASTER_PASSWORD = os.environ.get("MASTER_PASSWORD", "paolo")
 
 app = Flask(__name__)
 lock = threading.Lock()
@@ -81,7 +83,7 @@ BASE = """
       .card{background:var(--card);border-radius:16px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,0.25)}
       h1,h2,h3{margin:0 0 12px}
       .muted{color:var(--muted)}
-      input[type=text]{width:100%;padding:12px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:var(--text)}
+      input[type=text], input[type=password]{width:100%;padding:12px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:var(--text)}
       label{display:block;margin:10px 0}
       .row{display:flex;gap:8px;flex-wrap:wrap}
       .btn{appearance:none;border:none;border-radius:12px;padding:10px 14px;cursor:pointer}
@@ -94,6 +96,7 @@ BASE = """
       .imp{font-size:40px;font-weight:800;color:var(--danger)}
       small{opacity:.8}
       a{color:#93c5fd}
+      .hint{font-size:.9em;color:#cbd5e1}
     </style>
   </head>
   <body>
@@ -110,17 +113,27 @@ HOME = """
 {% extends "BASE" %}
 {% block content %}
 <h1>L’Impostore</h1>
-<p class="muted">Inserisci il nome. Se sei il Master, spunta la casella.</p>
+<p class="muted">Inserisci il nome. Se sei il Master, spunta la casella (se libera) e inserisci la password.</p>
 <form method="post" action="{{ url_for('join') }}" class="grid">
   <label>Nome
     <input type="text" name="name" required maxlength="40" placeholder="Es. Chiara">
   </label>
-  <label><input type="checkbox" name="is_master"> Sono il Master</label>
+
+  <label>
+    <input type="checkbox" name="is_master" {% if master_exists %}disabled{% endif %}>
+    Sono il Master {% if master_exists %}<span class="hint">(già assegnato)</span>{% endif %}
+  </label>
+
+  <label id="pwdwrap" style="display:none">Password Master
+    <input type="password" name="master_pwd" minlength="1" autocomplete="off" placeholder="Password">
+  </label>
+
   <div class="row">
     <button class="btn primary" type="submit">Entra</button>
     <a class="btn" href="{{ url_for('status') }}">Vedi stato</a>
   </div>
 </form>
+
 {% if players %}
   <hr>
   <h3>Giocatori connessi</h3>
@@ -128,6 +141,17 @@ HOME = """
     <span class="pill">{{ p.name }}{% if p.is_master %} • Master{% endif %}</span>
   {% endfor %}
 {% endif %}
+
+<script>
+  (function(){
+    const cb = document.querySelector('input[name="is_master"]');
+    const pw = document.getElementById('pwdwrap');
+    if (!cb || {{ 'true' if master_exists else 'false' }}) { if (pw) pw.style.display = 'none'; return; }
+    function toggle(){ pw.style.display = cb.checked ? 'block' : 'none'; }
+    cb.addEventListener('change', toggle);
+    toggle();
+  })();
+</script>
 {% endblock %}
 """
 
@@ -202,17 +226,20 @@ STATUS = """
 
 # Register template strings
 TEMPLATES = {"BASE": BASE, "HOME": HOME, "MASTER": MASTER, "PLAYER": PLAYER, "STATUS": STATUS}
+# Register templates with DictLoader
 app.jinja_loader = DictLoader(TEMPLATES)
 
 def render(name, **ctx):
     return render_template(name, **ctx)
+
 
 # ---------- Routes ----------
 @app.route("/", methods=["GET"])
 def home():
     with lock:
         players = list(STATE.players_by_token.values())
-    return render("HOME", players=players)
+        master_exists = (STATE.master_token is not None)
+    return render("HOME", players=players, master_exists=master_exists)
 
 
 @app.route("/join", methods=["POST"])
@@ -221,6 +248,25 @@ def join():
     is_master = bool(request.form.get("is_master"))
     if not name:
         return redirect(url_for("home"))
+
+    # Se qualcuno prova a diventare Master:
+    if is_master:
+        # 1) Verifica che non ce ne sia già uno
+        with lock:
+            if STATE.master_token is not None:
+                return (
+                    "<p style='font-family:system-ui'>Esiste già un Master per questa partita. "
+                    f"<a href='{url_for('home')}'>Torna indietro</a></p>",
+                    400,
+                )
+        # 2) Verifica password
+        pwd = (request.form.get("master_pwd") or "").strip()
+        if pwd != MASTER_PASSWORD:
+            return (
+                "<p style='font-family:system-ui'>Password Master errata. "
+                f"<a href='{url_for('home')}'>Torna indietro</a></p>",
+                403,
+            )
 
     token = _token()
     with lock:
@@ -242,11 +288,8 @@ def master(token):
             abort(403)
         players = list(STATE.players_by_token.values())
         rnd = STATE.current_round
-        imp_name = None
-        if rnd.impostor_token and rnd.impostor_token in STATE.players_by_token:
-            imp_name = STATE.players_by_token[rnd.impostor_token].name
     base_url = request.host_url.rstrip("/")
-    return render("MASTER", players=players, round=rnd, base_url=base_url, imp_name=imp_name)
+    return render("MASTER", players=players, round=rnd, base_url=base_url)
 
 
 @app.route("/player/<token>", methods=["GET"])
